@@ -23,7 +23,7 @@ def send_loan_notification(loan_id):
         pass
 
 
-@shared_task
+@shared_task(bind=True, queue='periodic_tasks')
 def check_overdue_loans():
     loans = Loan.objects.select_related("member").filter(
         is_returned=False,

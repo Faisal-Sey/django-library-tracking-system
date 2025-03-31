@@ -1,7 +1,8 @@
 from datetime import timedelta
 
-from django.db.models import F
+from django.db.models import F, Count, Q
 from rest_framework import viewsets, status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_200_OK
 
@@ -15,9 +16,18 @@ class AuthorViewSet(viewsets.ModelViewSet):
     queryset = Author.objects.all()
     serializer_class = AuthorSerializer
 
+
+class CustomPagination(PageNumberPagination):
+    page_size = 5
+    page_size_query_param = "page_size"
+    max_page_size = 100
+
 class BookViewSet(viewsets.ModelViewSet):
-    queryset = Book.objects.all()
+    queryset = Book.objects.select_related(
+        'author'
+    ).all()
     serializer_class = BookSerializer
+    pagination_class = CustomPagination
 
     @action(detail=True, methods=['post'])
     def loan(self, request, pk=None):
@@ -56,18 +66,22 @@ class MemberViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, method=["get"])
     def top_active(self, request, *args, **kwargs):
-        active_members = Loan.objects.select("member").filter(
-            is_returned=False
-        ).values_list("member_id")
+        top_active_members = Member.objects.filter(
+            loans__is_returned=False
+        ).annotate(
+            active_loans_count=Count('loans', filter=Q(loans__is_returned=False))
+        ).order_by('-active_loans_count')[:5]
 
-        active_members_with_loans_count = {}
-        for member in active_members:
-            if member in active_members_with_loans_count:
-                active_members_with_loans_count[member] = active_members_with_loans_count.get(member) + 1
-            else:
-                active_members_with_loans_count[member] = 1
+        response_data = []
+        for member in top_active_members:
+            response_data.append({
+                'id': member.id,
+                'username': member.user.username,
+                'email': member.user.email,
+                'active_loans_count': member.active_loans_count,
+            })
 
-        return Response(active_members_with_loans_count, status=HTTP_200_OK)
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class LoanViewSet(viewsets.ModelViewSet):
